@@ -1,20 +1,31 @@
 package com.amolinaj.eventmaster.data.repository.event
 
-import com.amolinaj.eventmaster.data.local.dao.event.EventDao
-import com.amolinaj.eventmaster.data.local.entity.event.EventEntity
+import android.util.Log
+import com.amolinaj.eventmaster.data.remote.dto.EventDto
+import com.amolinaj.eventmaster.data.remote.service.EventMasterApiService
 import com.amolinaj.eventmaster.ui.model.EventItem
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 class EventRepositoryImpl @Inject constructor(
-    private val eventDao: EventDao
+    private val apiService: EventMasterApiService
 ) : EventRepository {
 
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val events = MutableStateFlow<List<EventItem>>(emptyList())
+
+    init {
+        refreshEvents()
+    }
+
     override fun observeAll(): Flow<List<EventItem>> {
-        return eventDao.observeAll().map { events ->
-            events.map { it.toModel() }
-        }
+        return events.asStateFlow()
     }
 
     override suspend fun insert(
@@ -25,21 +36,36 @@ class EventRepositoryImpl @Inject constructor(
         location: String,
         imageResName: String?
     ) {
-        eventDao.insert(
-            EventEntity(
-                categoryId = categoryId,
-                title = title,
-                description = description,
-                date = date,
-                location = location,
-                imageResName = imageResName
+        try {
+            apiService.createEvent(
+                EventDto(
+                    categoryId = categoryId,
+                    title = title,
+                    description = description,
+                    date = date,
+                    location = location,
+                    imageResName = imageResName
+                )
             )
-        )
+            refreshEvents()
+        } catch (exception: Exception) {
+            Log.e("EventRepository", "No se pudo crear el evento", exception)
+        }
     }
 
-    private fun EventEntity.toModel(): EventItem {
+    private fun refreshEvents() {
+        repositoryScope.launch {
+            try {
+                events.value = apiService.getEvents().map { it.toModel() }
+            } catch (exception: Exception) {
+                Log.e("EventRepository", "No se pudieron cargar los eventos", exception)
+            }
+        }
+    }
+
+    private fun EventDto.toModel(): EventItem {
         return EventItem(
-            id = id,
+            id = id ?: 0,
             categoryId = categoryId,
             title = title,
             description = description,
